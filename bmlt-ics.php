@@ -8,8 +8,6 @@ Version: 0.1
 if (basename($_SERVER['PHP_SELF']) == basename(__FILE__)) {
     // die('Sorry, but you cannot access this page directly.');
 }
-
-
 require_once plugin_dir_path(__FILE__).'vendor/autoload.php';
 use Ramsey\Uuid\Uuid;
 
@@ -22,6 +20,7 @@ if (!class_exists("BMLT2ics")) {
     {
         public $optionsName = 'bmlt_tabs_options';  // get the root server from crouton
         public $options = array();
+        public $formats = array();
         
         public function __construct()
         {
@@ -52,13 +51,26 @@ if (!class_exists("BMLT2ics")) {
         public function doRouting()
         {
             $this->getOptions();
-            $meetingId = $_GET['meeting-id'];
-            $custom_query = '&meeting_ids[]='.$meetingId;
+            $this->formats = $this->getFormats($this->options['root_server']);
+            if (isset($_GET['meeting-id'])) {
+                $this->doSingleMeeting($_GET['meeting-id']);
+                return;
+            }
+        }
+        private function doSingleMeeting($meetingId)
+        {
+            $this->doCustomQuery('&meeting_ids[]='.$meetingId);
+            return;
+        }
+        private function doCustomQuery($custom_query)
+        {
             $meetings = $this->getAllMeetings($this->options['root_server'], '', '', $custom_query);
-            $event = $this->createEventFromMeeting($meetings[0]);
             $cal = new IcsLines();
             $this->beginCalendar($cal);
-            $cal->addLines($event);
+            foreach ($meetings as $meeting) {
+                $event = $this->createEventFromMeeting($meeting);
+                $cal->addLines($event);
+            }
             $this->endCalendar($cal);
 
             $this->sendHeaders();
@@ -108,7 +120,26 @@ if (!class_exists("BMLT2ics")) {
         }
         private function getDescription($meeting) : array
         {
-            $ret = array($meeting['meeting_name']);
+            $ret = array();
+            if (!empty($meeting['comments'])) {
+                $ret[] = $meeting['comments'];
+            }
+            $format_ids = explode(',', $meeting['format_shared_id_list']);
+            $formats = array_reduce($format_ids, function ($result, $id) {
+                if (isset($this->formats[$id])) {
+                    $result[] = $this->formats[$id];
+                }
+                return $result;
+            }, array());
+            if (count($formats) > 0) {
+                if (count($ret) > 0) {
+                    $ret[] = '';
+                }
+                $ret[] = 'Meeting formats:';
+                foreach ($formats as $format) {
+                    $ret[] = '- '.$format['description_string'];
+                }
+            }
             return apply_filters('bmlt_ics_description', $ret, $meeting);
         }
         private function createEventFromMeeting($meeting)
@@ -128,7 +159,11 @@ if (!class_exists("BMLT2ics")) {
             define('ICAL_FORMAT', 'Ymd\THis\Z');
             $dayDif = new DateInterval('P'.$dayDif.'D');
             $dur = new DateInterval('PT'.$duration[0].'H'.$duration[1].'M');
-            $nextStart = (new DateTime('NOW'))->add($dayDif)->setTime($startTime[0], $startTime[1]);
+            $nextStartDay = (new DateTime('NOW'))->add($dayDif);
+            // Some meetings may be monthly, bi-weekly, etc.  We have no standard for this in BMLT,
+            // but let every decide on their own stategy...
+            $nextStartDay = apply_filters('bmlt_ics_adjustWeek', $nextStartDay, $meeting);
+            $nextStart = $nextStartDay->setTime($startTime[0], $startTime[1]);
             $nextEnd = DateTime::createFromInterface($nextStart)->add($dur);
             $uuid = Uuid::uuid5(Uuid::NAMESPACE_URL, $this->options['root_server'].'/meeting-id/'.$meeting['id_bigint']);
             $lastChange = intval($this->getChanges($this->options['root_server'], $meeting['id_bigint'])[0]['date_int']);
@@ -170,6 +205,14 @@ if (!class_exists("BMLT2ics")) {
         private function getChanges($root_server, $meeting_id)
         {
             return $this->makeCall("$root_server/client_interface/json/?switcher=GetChanges&meeting_id=$meeting_id");
+        }
+        private function getFormats($root_server)
+        {
+            $arr = $this->makeCall("$root_server/client_interface/json/?switcher=GetFormats");
+            return array_reduce($arr, function ($result, $format) {
+                $result[$format['id']] = $format;
+                return $result;
+            }, array());
         }
         private function makeCall($url)
         {
