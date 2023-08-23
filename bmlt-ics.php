@@ -13,6 +13,8 @@ if (basename($_SERVER['PHP_SELF']) == basename(__FILE__)) {
 require_once plugin_dir_path(__FILE__).'vendor/autoload.php';
 use Ramsey\Uuid\Uuid;
 
+require_once "ics-lines.php";
+
 if (!class_exists("BMLT2ics")) {
     // phpcs:disable PSR1.Classes.ClassDeclaration.MissingNamespace
     class BMLT2ics
@@ -30,6 +32,23 @@ if (!class_exists("BMLT2ics")) {
             add_feed('bmlt2ics', array($this, 'doRouting'));
             $link = get_feed_link('bmlt2ics');
         }
+        public function beginCalendar($cal)
+        {
+            $cal->addLine("BEGIN", "VCALENDAR");
+            $cal->addLine("VERSION", "2.0");
+            $cal->addLine("CALSCALE", "GREGORIAN");
+            $cal->addLine("PRODID", "bmlt-enabled/ics");
+            $cal->addLine("METHOD", "PUBLISH");
+        }
+        public function endCalendar($cal)
+        {
+            $cal->addLine("END", "VCALENDAR");
+        }
+        public function sendHeaders()
+        {
+            header('Content-Type: text/calendar; charset=utf-8');
+            header('Content-Disposition: attachment; filename="cal.ics"');
+        }
         public function doRouting()
         {
             $this->getOptions();
@@ -37,26 +56,28 @@ if (!class_exists("BMLT2ics")) {
             $custom_query = '&meeting_ids[]='.$meetingId;
             $meetings = $this->getAllMeetings($this->options['root_server'], '', '', $custom_query);
             $event = $this->createEventFromMeeting($meetings[0]);
+            $cal = new IcsLines();
+            $this->beginCalendar($cal);
+            $cal->addLines($event);
+            $this->endCalendar($cal);
 
-            $cal = "BEGIN:VCALENDAR
-VERSION:2.0
-CALSCALE:GREGORIAN
-PRODID:bmlt-enabled/ics
-METHOD:PUBLISH
-".$event."
-END:VCALENDAR\r\n";
-            header('Content-Type: text/calendar; charset=utf-8');
-            header('Content-Disposition: attachment; filename="cal.ics"');
-
-            echo $cal;
+            $this->sendHeaders();
+            echo $cal->toString();
         }
         private function formatLocation($meeting)
         {
-            $ret = $meeting['location_text'] . '\n' .
-            $meeting['location_street'] . ', ' . $meeting['location_municipality'] . ', ' .
-            $meeting['location_province'] . ', ' . $meeting['location_postal_code_1'] . '\n' .
-              $meeting['location_info'];
-            return str_replace(',', '\,', apply_filters('bmlt_ics_location', $ret, $meeting));
+            if ($meeting['venue_type'] == "2") {
+                $ret = array(
+                    $meeting['virtual_meeting_link'],
+                    $meeting['virtual_meeting_additional_info']
+                );
+                return apply_filters('bmlt_ics_virtual', $ret, $meeting);
+            }
+            $ret = array($meeting['location_text'],
+                         $meeting['location_street'] . ', ' . $meeting['location_municipality'] . ', ' .
+                         $meeting['location_province'] . ', ' . $meeting['location_postal_code_1'],
+                         $meeting['location_info']);
+            return apply_filters('bmlt_ics_location', $ret, $meeting);
         }
         private function getOptions()
         {
@@ -81,6 +102,15 @@ END:VCALENDAR\r\n";
                 return 'http';
             }
         }
+        private function getSummary($meeting)
+        {
+            return apply_filters('bmlt_ics_summary', $meeting['meeting_name'], $meeting);
+        }
+        private function getDescription($meeting) : array
+        {
+            $ret = array($meeting['meeting_name']);
+            return apply_filters('bmlt_ics_description', $ret, $meeting);
+        }
         private function createEventFromMeeting($meeting)
         {
             $startTime = array_map('intval', explode(':', $meeting['start_time']));
@@ -103,20 +133,19 @@ END:VCALENDAR\r\n";
             $uuid = Uuid::uuid5(Uuid::NAMESPACE_URL, $this->options['root_server'].'/meeting-id/'.$meeting['id_bigint']);
             $lastChange = intval($this->getChanges($this->options['root_server'], $meeting['id_bigint'])[0]['date_int']);
             $url = $this->getServerRequestScheme().'://'.$_SERVER['HTTP_HOST'].$this->options['meeting_details_href']."?meeting-id=".$meeting['id_bigint'];
-            $location = $this->formatLocation($meeting);
-            $event =
-            "BEGIN:VEVENT
-UID:" . $uuid . "
-DTSTAMP:" . date(ICAL_FORMAT, (new DateTime('NOW'))->getTimestamp()) . "
-DTSTART:" . date(ICAL_FORMAT, $nextStart->getTimestamp()) . "
-DTEND:" . date(ICAL_FORMAT, $nextEnd->getTimestamp()) . "
-LAST-MODIFIED:" . date(ICAL_FORMAT, $lastChange) . "
-SUMMARY:" . $meeting['meeting_name'] . "
-LOCATION:$location 
-DESCRIPTION:NA Meeting
-URL:" . $url . "
-GEO:" . $meeting['latitude'] . ';' . $meeting['longitude'] . "
-END:VEVENT";
+            $event = new IcsLines();
+            $event->addLine("BEGIN", "VEVENT");
+            $event->addLine("UID", $uuid);
+            $event->addLine("DTSTAMP", date(ICAL_FORMAT, (new DateTime('NOW'))->getTimestamp()));
+            $event->addLine("DTSTART", date(ICAL_FORMAT, $nextStart->getTimestamp()));
+            $event->addLine("DTEND", date(ICAL_FORMAT, $nextEnd->getTimestamp()));
+            $event->addLine("LAST-MODIFIED", date(ICAL_FORMAT, $lastChange));
+            $event->addLine("SUMMARY", $this->getSummary($meeting));
+            $event->addMultilineValue("LOCATION", $this->formatLocation($meeting));
+            $event->addMultilineValue("DESCRIPTION", $this->getDescription($meeting));
+            $event->addLine("URL", $url);
+            $event->addLine("GEO:", $meeting['latitude'] . ';' . $meeting['longitude']);
+            $event->addLine("END", "VEVENT");
             return $event;
         }
         private function getAllMeetings($root_server, $services, $format_id, $query_string)
@@ -161,14 +190,14 @@ END:VEVENT";
             $c_errno  = curl_errno($ch);
             curl_close($ch);
             if ($httpcode != 200 && $httpcode != 302 && $httpcode != 304) {
-                echo "<p style='color: #FF0000;'>Problem Connecting to BMLT Root Server: $root_server ( $httpcode )</p>";
+                echo "<p style='color: #FF0000;'>Problem Connecting to BMLT Root Server: ( $httpcode )</p>";
                 return [];
             }
             return json_decode($results, true);
         }
     }
 }
-    //End Class BMLTMeetingDetails
+//End Class BMLTMeetingDetails
 // end if
 // instantiate the class
 if (class_exists("BMLT2ics")) {
