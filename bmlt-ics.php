@@ -8,6 +8,7 @@ Version: 0.1
 if (basename($_SERVER['PHP_SELF']) == basename(__FILE__)) {
     // die('Sorry, but you cannot access this page directly.');
 }
+define('ICAL_FORMAT', 'Ymd\THis\Z');
 require_once plugin_dir_path(__FILE__).'vendor/autoload.php';
 use Ramsey\Uuid\Uuid;
 
@@ -28,8 +29,8 @@ if (!class_exists("BMLT2ics")) {
         }
         public function addBmlt2icsFeed()
         {
-            add_feed('bmlt2ics', array($this, 'doRouting'));
-            $link = get_feed_link('bmlt2ics');
+            add_feed('bmlt2ics', array($this, 'doIcsRouting'));
+            add_feed('bmlt2Json', array($this, 'doJsonRouting'));
         }
         public function beginCalendar($cal)
         {
@@ -43,12 +44,16 @@ if (!class_exists("BMLT2ics")) {
         {
             $cal->addLine("END", "VCALENDAR");
         }
-        public function sendHeaders()
+        private function sendJsonHeaders()
+        {
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        private function sendHeaders()
         {
             header('Content-Type: text/calendar; charset=utf-8');
-            header('Content-Disposition: attachment; filename="cal.ics"');
+            //header('Content-Disposition: attachment; filename="cal.ics"');
         }
-        public function doRouting()
+        public function doIcsRouting()
         {
             $this->getOptions();
             $this->formats = $this->getFormats($this->options['root_server']);
@@ -56,6 +61,50 @@ if (!class_exists("BMLT2ics")) {
                 $this->doSingleMeeting($_GET['meeting-id']);
                 return;
             }
+        }
+        public function doJsonRouting()
+        {
+            $this->getOptions();
+            $start = $_REQUEST['start'];
+            $end = $_REQUEST['end'];
+            $custom_query = '';
+            if (isset($_REQUEST['extraParams'])) {
+                if (isset($_REQUEST['extraParams']['custom_query'])) {
+                    $custom_query = $_REQUEST['extraParams']['custom_query'];
+                }
+            }
+            $this->doJson($custom_query, new DateTime($start), new DateTime($end));
+        }
+        private function doJson($custom_query, $start, $end)
+        {
+            $is_data = explode(',', esc_html($this->options['service_body_1']));
+            $service = '&services='.$is_data[1];
+            $meetings = $this->getAllMeetings($this->options['root_server'], $service, '', $custom_query);
+            $events = array();
+            foreach ($meetings as $meeting) {
+                array_push($events, ...$this->createJsonEventFromMeeting($meeting, $start, $end));
+            }
+            $this->sendJsonHeaders();
+            echo json_encode($events);
+        }
+        private function createJsonEventFromMeeting($meeting, $start, $end): array
+        {
+            $startSafe = clone $start;
+            $times = $this->getTimesForFirstMeeting($meeting, $startSafe);
+            $title = $this->getSummary($meeting);
+            $url = $this->getURL($meeting);
+            $ret = array();
+            while ($times[0] < $end) {
+                $ret[] = array(
+                    'start' => $times[0]->format(DateTime::ATOM),
+                    'end' => $times[1]->format(DateTime::ATOM),
+                    'title' => $title,
+                    'url' => $url
+                );
+                $times[0]->modify('+1 week');
+                $times[1]->modify('+1 week');
+            }
+            return $ret;
         }
         private function doSingleMeeting($meetingId)
         {
@@ -68,7 +117,7 @@ if (!class_exists("BMLT2ics")) {
             $cal = new IcsLines();
             $this->beginCalendar($cal);
             foreach ($meetings as $meeting) {
-                $event = $this->createEventFromMeeting($meeting);
+                $event = $this->createEventFromMeeting($meeting, new DateTime('NOW'));
                 $cal->addLines($event);
             }
             $this->endCalendar($cal);
@@ -142,32 +191,50 @@ if (!class_exists("BMLT2ics")) {
             }
             return apply_filters('bmlt_ics_description', $ret, $meeting);
         }
-        private function createEventFromMeeting($meeting)
+        private function getTimesForFirstMeeting($meeting, $timePeriodStart)
         {
             $startTime = array_map('intval', explode(':', $meeting['start_time']));
             $duration = array_map('intval', explode(':', $meeting['duration_time']));
-            $dayDif = intval(date('w')) + 1 - $meeting['weekday_tinyint'] ;
+            $dayDif = intval($meeting['weekday_tinyint']) - (intval($timePeriodStart->format('w')) + 1) ;
             $dayDif += ($dayDif < 0) ? 7 : 0;
             if ($dayDif === 0) {
-                $difHours = intval(date('H')) - $startTime[0];
+                $difHours = intval($timePeriodStart->format('H')) - $startTime[0];
                 $dayDif = ($difHours > 0) ? 7 : 0;
                 if ($difHours === 0) {
-                    $difMins = intval(date('i')) - $startTime[1];
+                    $difMins = intval($timePeriodStart->format('i')) - $startTime[1];
                     $dayDif = ($difMins > 0) ? 7 : 0;
                 }
             }
-            define('ICAL_FORMAT', 'Ymd\THis\Z');
             $dayDif = new DateInterval('P'.$dayDif.'D');
             $dur = new DateInterval('PT'.$duration[0].'H'.$duration[1].'M');
-            $nextStartDay = (new DateTime('NOW'))->add($dayDif);
+            $nextStartDay = $timePeriodStart->add($dayDif);
             // Some meetings may be monthly, bi-weekly, etc.  We have no standard for this in BMLT,
             // but let every decide on their own stategy...
             $nextStartDay = apply_filters('bmlt_ics_adjustWeek', $nextStartDay, $meeting);
             $nextStart = $nextStartDay->setTime($startTime[0], $startTime[1]);
             $nextEnd = DateTime::createFromInterface($nextStart)->add($dur);
-            $uuid = Uuid::uuid5(Uuid::NAMESPACE_URL, $this->options['root_server'].'/meeting-id/'.$meeting['id_bigint']);
+            return [$nextStart, $nextEnd];
+        }
+        private function getUID($meeting)
+        {
+            return Uuid::uuid5(Uuid::NAMESPACE_URL, $this->options['root_server'].'/meeting-id/'.$meeting['id_bigint']);
+        }
+        private function getURL($meeting)
+        {
+            $path = $this->options['meeting_details_href'];
+            if ($meeting['venue_type'] === '2' && !empty($this->options['meeting_details_href'])) {
+                $path = $this->options['virtual_meeting_details_href'];
+            }
+            return $this->getServerRequestScheme().'://'.$_SERVER['HTTP_HOST'].$path."?meeting-id=".$meeting['id_bigint'];
+        }
+        private function createEventFromMeeting($meeting, DateTime $timePeriodStart)
+        {
+            $times = $this->getTimesForFirstMeeting($meeting, $timePeriodStart);
+            $nextStart = $times[0];
+            $nextEnd = $times[1];
+            $uuid = $this->getUID($meeting);
             $lastChange = intval($this->getChanges($this->options['root_server'], $meeting['id_bigint'])[0]['date_int']);
-            $url = $this->getServerRequestScheme().'://'.$_SERVER['HTTP_HOST'].$this->options['meeting_details_href']."?meeting-id=".$meeting['id_bigint'];
+            $url = $this->getURL($meeting);
             $event = new IcsLines();
             $event->addLine("BEGIN", "VEVENT");
             $event->addLine("UID", $uuid);
@@ -237,6 +304,13 @@ if (!class_exists("BMLT2ics")) {
                 return [];
             }
             return json_decode($results, true);
+        }
+        private function firstDayOfMonth()
+        {
+            // First day of this month
+            $d1 = new DateTime('midnight first day of this month');
+            $d2 = (new DateTime('last day of +2 months'))->setTime(23, 59);
+    
         }
     }
 }
