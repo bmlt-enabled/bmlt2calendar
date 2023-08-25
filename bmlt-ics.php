@@ -26,6 +26,10 @@ if (!class_exists("BMLT2ics")) {
         public function __construct()
         {
             add_action('init', array($this, 'addBmlt2icsFeed'));
+            //There are a few alternative places to put this in, for now, "calendar_displayed" seems best.
+            //add_shortcode('bmlt_to_fullcalendar', array($this, 'bmltToFullCalendar'));
+            add_filter('wpfc_calendar_displayed', array($this, 'bmltToFullCalendar'));
+            //add_filter('wpfc_fullcalendar_args', array($this, 'bmltToFullCalendar'));
         }
         public function addBmlt2icsFeed()
         {
@@ -68,41 +72,50 @@ if (!class_exists("BMLT2ics")) {
             $start = $_REQUEST['start'];
             $end = $_REQUEST['end'];
             $custom_query = '';
+            $special = '';
             if (isset($_REQUEST['extraParams'])) {
                 if (isset($_REQUEST['extraParams']['custom_query'])) {
                     $custom_query = $_REQUEST['extraParams']['custom_query'];
                 }
+                if (isset($_REQUEST['extraParams']['custom_query'])) {
+                    $special = $_REQUEST['extraParams']['special'];
+                }
             }
-            $this->doJson($custom_query, new DateTime($start), new DateTime($end));
+            $this->doJson($custom_query, new DateTime($start), new DateTime($end), $special);
         }
-        private function doJson($custom_query, $start, $end)
+        private function doJson($custom_query, $start, $end, $special)
         {
             $is_data = explode(',', esc_html($this->options['service_body_1']));
             $service = '&services='.$is_data[1];
             $meetings = $this->getAllMeetings($this->options['root_server'], $service, '', $custom_query);
             $events = array();
             foreach ($meetings as $meeting) {
-                array_push($events, ...$this->createJsonEventFromMeeting($meeting, $start, $end));
+                array_push($events, ...$this->createJsonEventFromMeeting($meeting, $start, $end, $special));
             }
             $this->sendJsonHeaders();
             echo json_encode($events);
         }
-        private function createJsonEventFromMeeting($meeting, $start, $end): array
+        private function createJsonEventFromMeeting($meeting, $start, $end, $special)
         {
             $startSafe = clone $start;
-            $times = $this->getTimesForFirstMeeting($meeting, $startSafe);
+            $startTime = $this->getTimeForFirstMeeting($meeting, $startSafe, $special);
+            if (is_null($startTime)) {
+                return [];
+            }
+            $endTime = $this->getEndTime($startTime, $meeting);
             $title = $this->getSummary($meeting);
             $url = $this->getURL($meeting);
             $ret = array();
-            while ($times[0] < $end) {
+            while ($startTime < $end) {
                 $ret[] = array(
-                    'start' => $times[0]->format(DateTime::ATOM),
-                    'end' => $times[1]->format(DateTime::ATOM),
+                    'start' => $startTime->format(DateTime::ATOM),
+                    'end' => $endTime->format(DateTime::ATOM),
                     'title' => $title,
                     'url' => $url
                 );
-                $times[0]->modify('+1 week');
-                $times[1]->modify('+1 week');
+                $startTime->modify('+1 week');
+                $startTime = apply_filters('bmlt_ics_adjustWeek', $startTime, $meeting, $special);
+                $endTime = $this->getEndTime($startTime, $meeting);
             }
             return $ret;
         }
@@ -191,10 +204,9 @@ if (!class_exists("BMLT2ics")) {
             }
             return apply_filters('bmlt_ics_description', $ret, $meeting);
         }
-        private function getTimesForFirstMeeting($meeting, $timePeriodStart)
+        private function getTimeForFirstMeeting($meeting, $timePeriodStart, $special = '')
         {
             $startTime = array_map('intval', explode(':', $meeting['start_time']));
-            $duration = array_map('intval', explode(':', $meeting['duration_time']));
             $dayDif = intval($meeting['weekday_tinyint']) - (intval($timePeriodStart->format('w')) + 1) ;
             $dayDif += ($dayDif < 0) ? 7 : 0;
             if ($dayDif === 0) {
@@ -206,14 +218,20 @@ if (!class_exists("BMLT2ics")) {
                 }
             }
             $dayDif = new DateInterval('P'.$dayDif.'D');
-            $dur = new DateInterval('PT'.$duration[0].'H'.$duration[1].'M');
             $nextStartDay = $timePeriodStart->add($dayDif);
             // Some meetings may be monthly, bi-weekly, etc.  We have no standard for this in BMLT,
             // but let every decide on their own stategy...
-            $nextStartDay = apply_filters('bmlt_ics_adjustWeek', $nextStartDay, $meeting);
-            $nextStart = $nextStartDay->setTime($startTime[0], $startTime[1]);
-            $nextEnd = DateTime::createFromInterface($nextStart)->add($dur);
-            return [$nextStart, $nextEnd];
+            $nextStartDay = apply_filters('bmlt_ics_adjustWeek', $nextStartDay, $meeting, $special);
+            if (is_null($nextStartDay)) {
+                return null;
+            }
+            return $nextStartDay->setTime($startTime[0], $startTime[1]);
+        }
+        private function getEndTime($startTime, $meeting)
+        {
+            $duration = array_map('intval', explode(':', $meeting['duration_time']));
+            $dur = new DateInterval('PT'.$duration[0].'H'.$duration[1].'M');
+            return (clone $startTime)->add($dur);
         }
         private function getUID($meeting)
         {
@@ -229,9 +247,8 @@ if (!class_exists("BMLT2ics")) {
         }
         private function createEventFromMeeting($meeting, DateTime $timePeriodStart)
         {
-            $times = $this->getTimesForFirstMeeting($meeting, $timePeriodStart);
-            $nextStart = $times[0];
-            $nextEnd = $times[1];
+            $nextStart = $this->getTimeForFirstMeeting($meeting, $timePeriodStart);
+            $nextEnd = $this->getEndTime($nextStart, $meeting);
             $uuid = $this->getUID($meeting);
             $lastChange = intval($this->getChanges($this->options['root_server'], $meeting['id_bigint'])[0]['date_int']);
             $url = $this->getURL($meeting);
@@ -304,6 +321,45 @@ if (!class_exists("BMLT2ics")) {
                 return [];
             }
             return json_decode($results, true);
+        }
+        function bmltToFullCalendar($args) {
+            $ret = '<script type="text/javascript">';
+            $defaultView = isset($args['bmlt_defaultView']) ? $args['bmlt_defaultView'] : "month";
+            $ret .= "var bmltCalendarDefaultView = (jQuery(window).width() < 765) ? 'listWeek' : '$defaultView';";
+            $ret .= "jQuery(document).on('wpfc_fullcalendar_args', function(event,args) {";
+            $ret .= "args.defaultView=bmltCalendarDefaultView;";
+            $ret .= "args.windowResize=function(args){args.calendar.changeView((jQuery(window).width() < 765) ? 'listWeek' : '$defaultView')};";
+            if (isset($args['bmlt_meetings_only'])) {
+                $ret .= "args.eventSources.shift();";
+            }
+            if (isset($args['bmlt_meetings_only']) || isset($args['bmlt_add_meetings'])) {
+                $ret .= "args.eventSources.push({";
+                $ret .= "url:'".get_feed_link("bmlt2Json");
+                $first = true;
+                if (isset($args['bmlt_special_query_option'])) {
+                    $ret .= $first ? '?' : '&';
+                    $first = false;
+                    $special = $args['bmlt_special_query_option'];
+                    $ret .= "special='$special'";
+                }
+                if (isset($args['bmlt_custom_query'])) {
+                    $ret .= $first ? '?' : '&';
+                    $first = false;
+                    $special = $args['bmlt_custom_query'];
+                    $ret .= "custom_query='$special'";
+                }
+                $color = "yellow";
+                if (isset($args['bmlt_color'])) {
+                    $color = $args['bmlt_color'];
+                }
+                $textColor = "black";
+                if (isset($args['bmlt_textColor'])) {
+                    $textColor = $args['bmlt_textColor'];
+                }
+                $ret .= "', color: '$color', textColor: '$textColor'})";
+            }
+            $ret .= '});</script>';
+            echo $ret;
         }
         private function firstDayOfMonth()
         {
