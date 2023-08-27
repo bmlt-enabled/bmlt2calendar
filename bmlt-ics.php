@@ -65,21 +65,43 @@ if (!class_exists("BMLT2ics")) {
                 $this->doSingleMeeting($_GET['meeting-id']);
                 return;
             }
+            $expand = false;
+            if (isset($_GET['expand'])) {
+                $expand = $_GET['expand'];
+            }
+            $startTime = new DateTime('NOW');
+            if (isset($_GET['startTime'])) {
+                $startTime = DateTime::createFromFormat(ICAL_FORMAT, $_GET['startTime']);
+            }
+            $endTime = (clone $startTime)->modify('+1 week');
+            if (isset($_GET['endTime'])) {
+                $endTime = DateTime::createFromFormat(ICAL_FORMAT, $_GET['endTime']);
+            }
+            $custom_query = '';
+            if (isset($_REQUEST['custom_query'])) {
+                // there's probably a better way to do this, but the problem is, the
+                // '&'s should be left in the url, but the spaces replaced....
+                $custom_query = str_replace(' ', '%20', $_REQUEST['custom_query']);
+            }
+            $is_data = explode(',', esc_html($this->options['service_body_1']));
+            $custom_query .= '&services='.$is_data[1];
+            $this->doCustomQuery($custom_query, $startTime, $endTime, $expand);
         }
         public function doJsonRouting()
         {
             $this->getOptions();
+            $this->formats = $this->getFormats($this->options['root_server']);
             $start = $_REQUEST['start'];
             $end = $_REQUEST['end'];
             $custom_query = '';
             $special = '';
-            if (isset($_REQUEST['extraParams'])) {
-                if (isset($_REQUEST['extraParams']['custom_query'])) {
-                    $custom_query = $_REQUEST['extraParams']['custom_query'];
-                }
-                if (isset($_REQUEST['extraParams']['custom_query'])) {
-                    $special = $_REQUEST['extraParams']['special'];
-                }
+            if (isset($_REQUEST['custom_query'])) {
+                // there's probably a better way to do this, but the problem is, the
+                // '&'s should be left in the url, but the spaces replaced....
+                $custom_query = str_replace(' ', '%20', $_REQUEST['custom_query']);
+            }
+            if (isset($_REQUEST['special'])) {
+                $special = $_REQUEST['special'];
             }
             $this->doJson($custom_query, new DateTime($start), new DateTime($end), $special);
         }
@@ -115,22 +137,26 @@ if (!class_exists("BMLT2ics")) {
                 );
                 $startTime->modify('+1 week');
                 $startTime = apply_filters('bmlt_ics_adjustWeek', $startTime, $meeting, $special);
+                // should never happen, but for robustnesses sake.
+                if (is_null($startTime)) {
+                    break;
+                }
                 $endTime = $this->getEndTime($startTime, $meeting);
             }
             return $ret;
         }
         private function doSingleMeeting($meetingId)
         {
-            $this->doCustomQuery('&meeting_ids[]='.$meetingId);
+            $this->doCustomQuery('&meeting_ids[]='.$meetingId, new DateTime('NOW'), null, false);
             return;
         }
-        private function doCustomQuery($custom_query)
+        private function doCustomQuery($custom_query, $startTime, $endTime, $expand)
         {
             $meetings = $this->getAllMeetings($this->options['root_server'], '', '', $custom_query);
             $cal = new IcsLines();
             $this->beginCalendar($cal);
             foreach ($meetings as $meeting) {
-                $event = $this->createEventFromMeeting($meeting, new DateTime('NOW'));
+                $event = $this->createEventFromMeeting($meeting, $startTime, $endTime, $expand);
                 $cal->addLines($event);
             }
             $this->endCalendar($cal);
@@ -245,26 +271,32 @@ if (!class_exists("BMLT2ics")) {
             }
             return $this->getServerRequestScheme().'://'.$_SERVER['HTTP_HOST'].$path."?meeting-id=".$meeting['id_bigint'];
         }
-        private function createEventFromMeeting($meeting, DateTime $timePeriodStart)
+        private function createEventFromMeeting($meeting, DateTime $timePeriodStart, DateTime $timePeriodEnd, $expand)
         {
-            $nextStart = $this->getTimeForFirstMeeting($meeting, $timePeriodStart);
-            $nextEnd = $this->getEndTime($nextStart, $meeting);
+            $nextStart = $this->getTimeForFirstMeeting($meeting, clone $timePeriodStart);
             $uuid = $this->getUID($meeting);
             $lastChange = intval($this->getChanges($this->options['root_server'], $meeting['id_bigint'])[0]['date_int']);
             $url = $this->getURL($meeting);
             $event = new IcsLines();
-            $event->addLine("BEGIN", "VEVENT");
-            $event->addLine("UID", $uuid);
-            $event->addLine("DTSTAMP", date(ICAL_FORMAT, (new DateTime('NOW'))->getTimestamp()));
-            $event->addLine("DTSTART", date(ICAL_FORMAT, $nextStart->getTimestamp()));
-            $event->addLine("DTEND", date(ICAL_FORMAT, $nextEnd->getTimestamp()));
-            $event->addLine("LAST-MODIFIED", date(ICAL_FORMAT, $lastChange));
-            $event->addLine("SUMMARY", $this->getSummary($meeting));
-            $event->addMultilineValue("LOCATION", $this->formatLocation($meeting));
-            $event->addMultilineValue("DESCRIPTION", $this->getDescription($meeting));
-            $event->addLine("URL", $url);
-            $event->addLine("GEO:", $meeting['latitude'] . ';' . $meeting['longitude']);
-            $event->addLine("END", "VEVENT");
+            while ($nextStart < $timePeriodEnd) {
+                $nextEnd = $this->getEndTime($nextStart, $meeting);
+                $event->addLine("BEGIN", "VEVENT");
+                $event->addLine("UID", $uuid);
+                $event->addLine("DTSTAMP", date(ICAL_FORMAT, (new DateTime('NOW'))->getTimestamp()));
+                $event->addLine("DTSTART", date(ICAL_FORMAT, $nextStart->getTimestamp()));
+                $event->addLine("DTEND", date(ICAL_FORMAT, $nextEnd->getTimestamp()));
+                $event->addLine("LAST-MODIFIED", date(ICAL_FORMAT, $lastChange));
+                $event->addLine("SUMMARY", $this->getSummary($meeting));
+                $event->addMultilineValue("LOCATION", $this->formatLocation($meeting));
+                $event->addMultilineValue("DESCRIPTION", $this->getDescription($meeting));
+                $event->addLine("URL", $url);
+                $event->addLine("GEO:", $meeting['latitude'] . ';' . $meeting['longitude']);
+                $event->addLine("END", "VEVENT");
+                if (!$expand) {
+                    break;
+                }
+                $nextStart->modify('+1 week');
+            }
             return $event;
         }
         private function getAllMeetings($root_server, $services, $format_id, $query_string)
@@ -293,10 +325,14 @@ if (!class_exists("BMLT2ics")) {
         private function getFormats($root_server)
         {
             $arr = $this->makeCall("$root_server/client_interface/json/?switcher=GetFormats");
-            return array_reduce($arr, function ($result, $format) {
-                $result[$format['id']] = $format;
-                return $result;
-            }, array());
+            return apply_filters(
+                'bmlt_ics_load_formats',
+                array_reduce($arr, function ($result, $format) {
+                    $result[$format['id']] = $format;
+                    return $result;
+                },
+                array())
+            );
         }
         private function makeCall($url)
         {
@@ -322,13 +358,11 @@ if (!class_exists("BMLT2ics")) {
             }
             return json_decode($results, true);
         }
-        function bmltToFullCalendar($args) {
+        public function bmltToFullCalendar($args)
+        {
             $ret = '<script type="text/javascript">';
-            $defaultView = isset($args['bmlt_defaultView']) ? $args['bmlt_defaultView'] : "month";
-            $ret .= "var bmltCalendarDefaultView = (jQuery(window).width() < 765) ? 'listWeek' : '$defaultView';";
             $ret .= "jQuery(document).on('wpfc_fullcalendar_args', function(event,args) {";
-            $ret .= "args.defaultView=bmltCalendarDefaultView;";
-            $ret .= "args.windowResize=function(args){args.calendar.changeView((jQuery(window).width() < 765) ? 'listWeek' : '$defaultView')};";
+            $ret = apply_filters('bmlt_ics_configureCalendar', $ret, $args);
             if (isset($args['bmlt_meetings_only'])) {
                 $ret .= "args.eventSources.shift();";
             }
@@ -340,13 +374,13 @@ if (!class_exists("BMLT2ics")) {
                     $ret .= $first ? '?' : '&';
                     $first = false;
                     $special = $args['bmlt_special_query_option'];
-                    $ret .= "special='$special'";
+                    $ret .= 'special='.$special.'';
                 }
                 if (isset($args['bmlt_custom_query'])) {
                     $ret .= $first ? '?' : '&';
                     $first = false;
-                    $special = $args['bmlt_custom_query'];
-                    $ret .= "custom_query='$special'";
+                    $special = urlencode(html_entity_decode($args['bmlt_custom_query']));
+                    $ret .= 'custom_query='.$special.'';
                 }
                 $color = "yellow";
                 if (isset($args['bmlt_color'])) {
@@ -360,13 +394,6 @@ if (!class_exists("BMLT2ics")) {
             }
             $ret .= '});</script>';
             echo $ret;
-        }
-        private function firstDayOfMonth()
-        {
-            // First day of this month
-            $d1 = new DateTime('midnight first day of this month');
-            $d2 = (new DateTime('last day of +2 months'))->setTime(23, 59);
-    
         }
     }
 }
