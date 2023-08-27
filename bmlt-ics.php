@@ -147,7 +147,7 @@ if (!class_exists("BMLT2ics")) {
         }
         private function doSingleMeeting($meetingId)
         {
-            $this->doCustomQuery('&meeting_ids[]='.$meetingId, new DateTime('NOW'), null, false);
+            $this->doCustomQuery('&meeting_ids[]='.$meetingId, new DateTime('NOW'), (new DateTime('NOW'))->modify('+1 week'), false);
             return;
         }
         private function doCustomQuery($custom_query, $startTime, $endTime, $expand)
