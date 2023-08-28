@@ -185,7 +185,7 @@ if (!class_exists("BMLT2ics")) {
         private function getOptions()
         {
             // Don't forget to set up the default options
-            if (!$theOptions = get_option($this->optionsName)) {g
+            if (!$theOptions = get_option($this->optionsName)) {
                 $theOptions = array(
                  'root_server' => '',
                  'service_body_1' => ''
