@@ -127,13 +127,16 @@ if (!class_exists("BMLT2ics")) {
             $endTime = $this->getEndTime($startTime, $meeting);
             $title = $this->getSummary($meeting);
             $url = $this->getURL($meeting);
+            $loc = $this->formatLocation($meeting);
+            array_push($loc, ...$this->getDescription($meeting));
             $ret = array();
             while ($startTime < $end) {
                 $ret[] = array(
                     'start' => $startTime->format(DateTime::ATOM),
                     'end' => $endTime->format(DateTime::ATOM),
                     'title' => $title,
-                    'url' => $url
+                    'url' => $url,
+                    'description' => implode('<br/>', $loc)
                 );
                 $startTime->modify('+1 week');
                 $startTime = apply_filters('bmlt_ics_adjustWeek', $startTime, $meeting, $special);
@@ -173,16 +176,16 @@ if (!class_exists("BMLT2ics")) {
                 );
                 return apply_filters('bmlt_ics_virtual', $ret, $meeting);
             }
+            $state = empty($meeting['location_province']) ? ' ' : ', '.$meeting['location_province'].', ';
             $ret = array($meeting['location_text'],
-                         $meeting['location_street'] . ', ' . $meeting['location_municipality'] . ', ' .
-                         $meeting['location_province'] . ', ' . $meeting['location_postal_code_1'],
+                         $meeting['location_street'] . ', ' . $meeting['location_municipality'].$state.$meeting['location_postal_code_1'],
                          $meeting['location_info']);
             return apply_filters('bmlt_ics_location', $ret, $meeting);
         }
         private function getOptions()
         {
             // Don't forget to set up the default options
-            if (!$theOptions = get_option($this->optionsName)) {
+            if (!$theOptions = get_option($this->optionsName)) {g
                 $theOptions = array(
                  'root_server' => '',
                  'service_body_1' => ''
@@ -390,7 +393,15 @@ if (!class_exists("BMLT2ics")) {
                 if (isset($args['bmlt_textColor'])) {
                     $textColor = $args['bmlt_textColor'];
                 }
-                $ret .= "', color: '$color', textColor: '$textColor'})";
+                $ret .= "', color: '$color', textColor: '$textColor'}),";
+
+                $ret .= 'args.eventRender = function(eventObj,el) {';
+                $ret .= "if (eventObj.hasOwnProperty('description')) {";
+                
+                $ret .= 'tippy(el[0], {content: eventObj.description, theme : WPFC.tippy_theme,
+					placement : WPFC.tippy_placement, allowHTML: true} );';
+                $ret .= "}"; // close if
+                $ret .= "  };"; // close event render function
             }
             $ret .= '});</script>';
             echo $ret;
