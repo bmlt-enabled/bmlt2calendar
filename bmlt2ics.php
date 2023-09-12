@@ -108,7 +108,7 @@ if (!class_exists("BMLT2ics")) {
         private function doJson($custom_query, $start, $end, $special)
         {
             $is_data = explode(',', esc_html($this->options['service_body_1']));
-            $service = '&services='.$is_data[1];
+            $service = '&services='.$is_data[1].'&recursive=1';
             $meetings = $this->getAllMeetings($this->options['root_server'], $service, '', $custom_query);
             $events = array();
             foreach ($meetings as $meeting) {
@@ -277,23 +277,25 @@ if (!class_exists("BMLT2ics")) {
         private function createEventFromMeeting($meeting, DateTime $timePeriodStart, DateTime $timePeriodEnd, $expand)
         {
             $nextStart = $this->getTimeForFirstMeeting($meeting, clone $timePeriodStart);
+            $timezoneOffset = intval(wp_timezone()->getOffset($nextStart));
             $uuid = $this->getUID($meeting);
             $lastChange = intval($this->getChanges($this->options['root_server'], $meeting['id_bigint'])[0]['date_int']);
             $url = $this->getURL($meeting);
             $event = new IcsLines();
             while ($nextStart < $timePeriodEnd) {
+                $event->addLine('tyoff', $timezoneOffset);
                 $nextEnd = $this->getEndTime($nextStart, $meeting);
                 $event->addLine("BEGIN", "VEVENT");
                 $event->addLine("UID", $uuid);
                 $event->addLine("DTSTAMP", date(ICAL_FORMAT, (new DateTime('NOW'))->getTimestamp()));
-                $event->addLine("DTSTART", date(ICAL_FORMAT, $nextStart->getTimestamp()));
-                $event->addLine("DTEND", date(ICAL_FORMAT, $nextEnd->getTimestamp()));
+                $event->addLine("DTSTART", date(ICAL_FORMAT, $nextStart->getTimestamp()-$timezoneOffset));
+                $event->addLine("DTEND", date(ICAL_FORMAT, $nextEnd->getTimestamp()-$timezoneOffset));
                 $event->addLine("LAST-MODIFIED", date(ICAL_FORMAT, $lastChange));
                 $event->addLine("SUMMARY", $this->getSummary($meeting));
                 $event->addMultilineValue("LOCATION", $this->formatLocation($meeting));
                 $event->addMultilineValue("DESCRIPTION", $this->getDescription($meeting));
                 $event->addLine("URL", $url);
-                $event->addLine("GEO:", $meeting['latitude'] . ';' . $meeting['longitude']);
+                $event->addLine("GEO", $meeting['latitude'] . ';' . $meeting['longitude']);
                 $event->addLine("END", "VEVENT");
                 if (!$expand) {
                     break;
@@ -385,11 +387,11 @@ if (!class_exists("BMLT2ics")) {
                     $special = urlencode(html_entity_decode($args['bmlt_custom_query']));
                     $ret .= 'custom_query='.$special.'';
                 }
-                $color = "yellow";
+                $color = "#294372";
                 if (isset($args['bmlt_color'])) {
                     $color = $args['bmlt_color'];
                 }
-                $textColor = "black";
+                $textColor = "white";
                 if (isset($args['bmlt_textColor'])) {
                     $textColor = $args['bmlt_textColor'];
                 }
