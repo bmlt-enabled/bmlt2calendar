@@ -1,8 +1,11 @@
 <?php
-/*
-Plugin Name: BMLT 2 ICS
-Description: Generate Calendars from BMLT Meetings
-Version: 0.1
+/** 
+Plugin Name: BMLT2Calendar
+Plugin URI: https://wordpress.org/plugins/bmlt2calendar/
+Description: Convert data from a BMLT Meeting database to a calendar format
+Author: otrok7, bmlt-enabled
+Author URI: https://bmlt.app
+Version: 1.0.0
 */
 /* Disallow direct access to the plugin file */
 if (basename($_SERVER['PHP_SELF']) == basename(__FILE__)) {
