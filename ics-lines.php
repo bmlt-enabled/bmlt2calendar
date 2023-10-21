@@ -32,10 +32,10 @@ class IcsLines
     {
         return implode("\r\n", $this->lines);
     }
-    public function rrule($day, DateTime $until)
+    public function rrule($day, $until)
     {
         $ret = "FREQ=WEEKLY;BYDAY='.IcsLines::$this->days[$day].';INTERVAL=1;'";
-        $ret .= 'UNTIL='.date(ICAL_FORMAT, $until->getTimestamp());
+        $ret .= 'UNTIL='.date($until);
         return $ret;
     }
 }
