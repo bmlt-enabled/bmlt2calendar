@@ -1,5 +1,5 @@
 <?php
-/** 
+/**
 Plugin Name: BMLT2Calendar
 Plugin URI: https://wordpress.org/plugins/bmlt2calendar/
 Description: Convert data from a BMLT Meeting database to a calendar format
@@ -11,20 +11,19 @@ Version: 1.0.0
 if (basename($_SERVER['PHP_SELF']) == basename(__FILE__)) {
     // die('Sorry, but you cannot access this page directly.');
 }
-define('ICAL_FORMAT', 'Ymd\THis\Z');
 require_once plugin_dir_path(__FILE__).'vendor/autoload.php';
 use Ramsey\Uuid\Uuid;
 
 require_once "ics-lines.php";
 
-if (!class_exists("BMLT2ics")) {
+if (!class_exists("BMLT2calendar")) {
     // phpcs:disable PSR1.Classes.ClassDeclaration.MissingNamespace
-    class BMLT2ics
-    // phpcs:enable PSR1.Classes.ClassDeclaration.MissingNamespace
+    class BMLT2calendar
     {
-        public $optionsName = 'bmlt_tabs_options';  // get the root server from crouton
-        public $options = array();
-        public $formats = array();
+        private $icalFormat = 'Ymd\THis\Z';
+        private $optionsName = 'bmlt_tabs_options';  // get the root server from crouton
+        private $options = array();
+        private $formats = array();
         
         public function __construct()
         {
@@ -39,7 +38,7 @@ if (!class_exists("BMLT2ics")) {
             add_feed('bmlt2ics', array($this, 'doIcsRouting'));
             add_feed('bmlt2Json', array($this, 'doJsonRouting'));
         }
-        public function beginCalendar($cal)
+        private function beginCalendar($cal)
         {
             $cal->addLine("BEGIN", "VCALENDAR");
             $cal->addLine("VERSION", "2.0");
@@ -47,7 +46,7 @@ if (!class_exists("BMLT2ics")) {
             $cal->addLine("PRODID", "bmlt-enabled/ics");
             $cal->addLine("METHOD", "PUBLISH");
         }
-        public function endCalendar($cal)
+        private function endCalendar($cal)
         {
             $cal->addLine("END", "VCALENDAR");
         }
@@ -74,11 +73,11 @@ if (!class_exists("BMLT2ics")) {
             }
             $startTime = new DateTime('NOW');
             if (isset($_GET['startTime'])) {
-                $startTime = DateTime::createFromFormat(ICAL_FORMAT, $_GET['startTime']);
+                $startTime = DateTime::createFromFormat($this->icalFormat, $_GET['startTime']);
             }
             $endTime = (clone $startTime)->modify('+1 week');
             if (isset($_GET['endTime'])) {
-                $endTime = DateTime::createFromFormat(ICAL_FORMAT, $_GET['endTime']);
+                $endTime = DateTime::createFromFormat($this->icalFormat, $_GET['endTime']);
             }
             $custom_query = '';
             if (isset($_REQUEST['custom_query'])) {
@@ -271,8 +270,11 @@ if (!class_exists("BMLT2ics")) {
         }
         private function getURL($meeting)
         {
+            if (!isset($this->options['meeting_details_href'])) {
+                return "";
+            }
             $path = $this->options['meeting_details_href'];
-            if ($meeting['venue_type'] === '2' && !empty($this->options['meeting_details_href'])) {
+            if ($meeting['venue_type'] === '2' && !empty($this->options['virtual_meeting_details_href'])) {
                 $path = $this->options['virtual_meeting_details_href'];
             }
             return $this->getServerRequestScheme().'://'.$_SERVER['HTTP_HOST'].$path."?meeting-id=".$meeting['id_bigint'];
@@ -290,14 +292,16 @@ if (!class_exists("BMLT2ics")) {
                 $nextEnd = $this->getEndTime($nextStart, $meeting);
                 $event->addLine("BEGIN", "VEVENT");
                 $event->addLine("UID", $uuid);
-                $event->addLine("DTSTAMP", date(ICAL_FORMAT, (new DateTime('NOW'))->getTimestamp()));
-                $event->addLine("DTSTART", date(ICAL_FORMAT, $nextStart->getTimestamp()-$timezoneOffset));
-                $event->addLine("DTEND", date(ICAL_FORMAT, $nextEnd->getTimestamp()-$timezoneOffset));
-                $event->addLine("LAST-MODIFIED", date(ICAL_FORMAT, $lastChange));
+                $event->addLine("DTSTAMP", date($this->icalFormat, (new DateTime('NOW'))->getTimestamp()));
+                $event->addLine("DTSTART", date($this->icalFormat, $nextStart->getTimestamp()-$timezoneOffset));
+                $event->addLine("DTEND", date($this->icalFormat, $nextEnd->getTimestamp()-$timezoneOffset));
+                $event->addLine("LAST-MODIFIED", date($this->icalFormat, $lastChange));
                 $event->addLine("SUMMARY", $this->getSummary($meeting));
                 $event->addMultilineValue("LOCATION", $this->formatLocation($meeting));
                 $event->addMultilineValue("DESCRIPTION", $this->getDescription($meeting));
-                $event->addLine("URL", $url);
+                if (strlen($url) > 0) {
+                    $event->addLine("URL", $url);
+                }
                 $event->addLine("GEO", $meeting['latitude'] . ';' . $meeting['longitude']);
                 $event->addLine("END", "VEVENT");
                 if (!$expand) {
@@ -413,9 +417,9 @@ if (!class_exists("BMLT2ics")) {
         }
     }
 }
-//End Class BMLTMeetingDetails
+//End Class BMLT2calendar
 // end if
 // instantiate the class
-if (class_exists("BMLT2ics")) {
-    $BMLT2ics_instance = new BMLT2ics();
+if (class_exists("BMLT2calendar")) {
+    $BMLT2calendar_instance = new BMLT2calendar();
 }
