@@ -1,4 +1,13 @@
 {
+    "name": "bmlt/bmlt2calendar",
+    "description": "This is a WordPress plugin for BMLT that converts meeting info to calendar formats.",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+      {
+        "name": "otrok7"
+      }
+    ],
     "require": {
         "ramsey/uuid": "^4.7"
     },
