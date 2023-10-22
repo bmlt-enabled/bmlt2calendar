@@ -56,6 +56,33 @@ jobs:
           ./gh-release-notes.sh readme.txt "wp"
 #          curl -LO https://raw.githubusercontent.com/bmlt-enabled/bmlt-wordpress-deploy/master/deploy-wordpress.sh
 #          chmod +x deploy-wordpress.sh
-#          echo "ARTIFACT_PATH=./${PLUGIN}-${GITHUB_REF##*/}.zip" >> $GITHUB_ENV
-#          echo "ARTIFACT_NAME=${PLUGIN}-${GITHUB_REF##*/}.zip" >> $GITHUB_ENV
+          echo "ARTIFACT_PATH=./${PLUGIN}-${GITHUB_REF##*/}.zip" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=${PLUGIN}-${GITHUB_REF##*/}.zip" >> $GITHUB_ENV
+
+
+      - name: Release beta
+        if: contains(github.ref, 'beta')
+        id: beta_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ github.ref }}
+          prerelease: true
+          draft: false
+
+      - name: Release stable
+        if: "!contains(github.ref, 'beta')"
+        id: stable_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ github.ref }}
+          body_path: "changelog.txt"
+          prerelease: false
+          draft: false
+
 
