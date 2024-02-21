@@ -6,10 +6,12 @@ Description: Convert data from a BMLT Meeting database to a calendar format
 Author: otrok7, bmlt-enabled
 Author URI: https://bmlt.app
 Version: 1.0.0
+License:           GPL v2 or later
+License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 */
 /* Disallow direct access to the plugin file */
-if (basename($_SERVER['PHP_SELF']) == basename(__FILE__)) {
-    // die('Sorry, but you cannot access this page directly.');
+if (!defined('ABSPATH')) {
+    exit; // Exit if accessed directly
 }
 require_once plugin_dir_path(__FILE__).'vendor/autoload.php';
 use Ramsey\Uuid\Uuid;
@@ -64,26 +66,26 @@ if (!class_exists("BMLT2calendar")) {
             $this->getOptions();
             $this->formats = $this->getFormats($this->options['root_server']);
             if (isset($_GET['meeting-id'])) {
-                $this->doSingleMeeting($_GET['meeting-id']);
+                $this->doSingleMeeting(sanitize_text_field(sanitize_text_field($_GET['meeting-id'])));
                 return;
             }
             $expand = false;
             if (isset($_GET['expand'])) {
-                $expand = $_GET['expand'];
+                $expand = sanitize_text_field($_GET['expand']);
             }
             $startTime = new DateTime('NOW');
             if (isset($_GET['startTime'])) {
-                $startTime = DateTime::createFromFormat($this->icalFormat, $_GET['startTime']);
+                $startTime = DateTime::createFromFormat($this->icalFormat, sanitize_text_field($_GET['startTime']));
             }
             $endTime = (clone $startTime)->modify('+1 week');
             if (isset($_GET['endTime'])) {
-                $endTime = DateTime::createFromFormat($this->icalFormat, $_GET['endTime']);
+                $endTime = DateTime::createFromFormat($this->icalFormat, sanitize_text_field($_GET['endTime']));
             }
             $custom_query = '';
             if (isset($_REQUEST['custom_query'])) {
                 // there's probably a better way to do this, but the problem is, the
                 // '&'s should be left in the url, but the spaces replaced....
-                $custom_query = str_replace(' ', '%20', $_REQUEST['custom_query']);
+                $custom_query = str_replace(' ', '%20', sanitize_text_field($_REQUEST['custom_query']));
             }
             $is_data = explode(',', esc_html($this->options['service_body_1']));
             $custom_query .= '&services='.$is_data[1];
@@ -93,17 +95,17 @@ if (!class_exists("BMLT2calendar")) {
         {
             $this->getOptions();
             $this->formats = $this->getFormats($this->options['root_server']);
-            $start = $_REQUEST['start'];
-            $end = $_REQUEST['end'];
+            $start = sanitize_text_field($_REQUEST['start']);
+            $end = sanitize_text_field($_REQUEST['end']);
             $custom_query = '';
             $special = '';
             if (isset($_REQUEST['custom_query'])) {
                 // there's probably a better way to do this, but the problem is, the
                 // '&'s should be left in the url, but the spaces replaced....
-                $custom_query = str_replace(' ', '%20', $_REQUEST['custom_query']);
+                $custom_query = str_replace(' ', '%20', sanitize_text_field($_REQUEST['custom_query']));
             }
             if (isset($_REQUEST['special'])) {
-                $special = $_REQUEST['special'];
+                $special = sanitize_text_field($_REQUEST['special']);
             }
             $this->doJson($custom_query, new DateTime($start), new DateTime($end), $special);
         }
@@ -117,7 +119,7 @@ if (!class_exists("BMLT2calendar")) {
                 array_push($events, ...$this->createJsonEventFromMeeting($meeting, $start, $end, $special));
             }
             $this->sendJsonHeaders();
-            echo json_encode($events);
+            echo wp_json_encode($events);
         }
         private function createJsonEventFromMeeting($meeting, $start, $end, $special)
         {
@@ -158,7 +160,7 @@ if (!class_exists("BMLT2calendar")) {
         private function doCustomQuery($custom_query, $startTime, $endTime, $expand)
         {
             $meetings = $this->getAllMeetings($this->options['root_server'], '', '', $custom_query);
-            $cal = new IcsLines();
+            $cal = new BMLT2CalendarIcsLines();
             $this->beginCalendar($cal);
             foreach ($meetings as $meeting) {
                 $event = $this->createEventFromMeeting($meeting, $startTime, $endTime, $expand);
@@ -173,15 +175,15 @@ if (!class_exists("BMLT2calendar")) {
         {
             if ($meeting['venue_type'] == "2") {
                 $ret = array(
-                    $meeting['virtual_meeting_link'],
-                    $meeting['virtual_meeting_additional_info']
+                    esc_url($meeting['virtual_meeting_link']),
+                    esc_html($meeting['virtual_meeting_additional_info'])
                 );
                 return apply_filters('bmlt_ics_virtual', $ret, $meeting);
             }
             $state = empty($meeting['location_province']) ? ' ' : ', '.$meeting['location_province'].', ';
-            $ret = array($meeting['location_text'],
-                         $meeting['location_street'] . ', ' . $meeting['location_municipality'].$state.$meeting['location_postal_code_1'],
-                         $meeting['location_info']);
+            $ret = array(esc_html($meeting['location_text']),
+                         esc_html($meeting['location_street'] . ', ' . $meeting['location_municipality'].$state.$meeting['location_postal_code_1']),
+                         esc_html($meeting['location_info']));
             return apply_filters('bmlt_ics_location', $ret, $meeting);
         }
         private function getOptions()
@@ -209,7 +211,7 @@ if (!class_exists("BMLT2calendar")) {
         }
         private function getSummary($meeting)
         {
-            return apply_filters('bmlt_ics_summary', $meeting['meeting_name'], $meeting);
+            return esc_html(apply_filters('bmlt_ics_summary', $meeting['meeting_name'], $meeting));
         }
         private function getDescription($meeting) : array
         {
@@ -286,7 +288,7 @@ if (!class_exists("BMLT2calendar")) {
             $uuid = $this->getUID($meeting);
             $lastChange = intval($this->getChanges($this->options['root_server'], $meeting['id_bigint'])[0]['date_int']);
             $url = $this->getURL($meeting);
-            $event = new IcsLines();
+            $event = new BMLT2CalendarIcsLines();
             while ($nextStart < $timePeriodEnd) {
                 $event->addLine('tyoff', $timezoneOffset);
                 $nextEnd = $this->getEndTime($nextStart, $meeting);
@@ -296,13 +298,13 @@ if (!class_exists("BMLT2calendar")) {
                 $event->addLine("DTSTART", date($this->icalFormat, $nextStart->getTimestamp()-$timezoneOffset));
                 $event->addLine("DTEND", date($this->icalFormat, $nextEnd->getTimestamp()-$timezoneOffset));
                 $event->addLine("LAST-MODIFIED", date($this->icalFormat, $lastChange));
-                $event->addLine("SUMMARY", $this->getSummary($meeting));
+                $event->addLine("SUMMARY", esc_html($this->getSummary($meeting)));
                 $event->addMultilineValue("LOCATION", $this->formatLocation($meeting));
                 $event->addMultilineValue("DESCRIPTION", $this->getDescription($meeting));
                 if (strlen($url) > 0) {
-                    $event->addLine("URL", $url);
+                    $event->addLine("URL", esc_url($url));
                 }
-                $event->addLine("GEO", $meeting['latitude'] . ';' . $meeting['longitude']);
+                $event->addLine("GEO", (float)$meeting['latitude'] . ';' . (float)$meeting['longitude']);
                 $event->addLine("END", "VEVENT");
                 if (!$expand) {
                     break;
@@ -348,72 +350,50 @@ if (!class_exists("BMLT2calendar")) {
         }
         private function makeCall($url)
         {
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $url);
-            //curl_setopt($ch, CURLOPT_USERAGENT, "Mozilla/4.0 (compatible; MSIE 5.01; Windows NT 5.0)");
-            curl_setopt($ch, CURLOPT_USERAGENT, "cURL Mozilla/5.0 (Windows NT 5.1; rv:21.0) Gecko/20130401 Firefox/21.0");
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
-            curl_setopt($ch, CURLOPT_ENCODING, 'gzip,deflate');
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            
-            $results  = curl_exec($ch);
-            // echo curl_error($ch);
-            $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $c_error  = curl_error($ch);
-            $c_errno  = curl_errno($ch);
-            curl_close($ch);
+            $results  = wp_remote_get($url);
+            $httpcode = wp_remote_retrieve_response_code($results);
             if ($httpcode != 200 && $httpcode != 302 && $httpcode != 304) {
-                echo "<p style='color: #FF0000;'>Problem Connecting to BMLT Root Server: ( $httpcode )</p>";
+                echo "<p style='color: #FF0000;'>Problem Connecting to BMLT Root Server: ( ".(int)$httpcode." )</p>";
                 return [];
             }
-            return json_decode($results, true);
+            return json_decode(wp_remote_retrieve_body($results), true);
         }
         public function bmltToFullCalendar($args)
         {
-            $ret = '<script type="text/javascript">';
-            $ret .= "jQuery(document).on('wpfc_fullcalendar_args', function(event,args) {";
-            $ret = apply_filters('bmlt_ics_configureCalendar', $ret, $args);
-            if (isset($args['bmlt_meetings_only'])) {
-                $ret .= "args.eventSources.shift();";
-            }
-            if (isset($args['bmlt_meetings_only']) || isset($args['bmlt_add_meetings'])) {
-                $ret .= "args.eventSources.push({";
-                $ret .= "url:'".get_feed_link("bmlt2Json");
+            $meetingsOnly = isset($args['bmlt_meetings_only']);
+            $addMeetings = isset($args['bmlt_add_meetings']);
+            if ($meetingsOnly || $addMeetings) {
+                wp_enqueue_script('bmlt2calendar', plugins_url('bmlt2calendar/bmlt2calendar.js'), array('jquery'), filemtime(plugin_dir_path(__FILE__) . "bmlt2calendar.js"), true);
+                $ret = "var bmlt2calendar = { config: {";
+                $ret .= '"meetingsOnly":'.($meetingsOnly ? "true" : "false").',';
+                $url = get_feed_link("bmlt2Json");
                 $first = true;
                 if (isset($args['bmlt_special_query_option'])) {
-                    $ret .= $first ? '?' : '&';
+                    $url .= $first ? '?' : '&';
                     $first = false;
-                    $special = $args['bmlt_special_query_option'];
-                    $ret .= 'special='.$special.'';
+                    $special = urlencode($args['bmlt_special_query_option']);
+                    $url .= 'special='.$special.'';
                 }
                 if (isset($args['bmlt_custom_query'])) {
-                    $ret .= $first ? '?' : '&';
+                    $url .= $first ? '?' : '&';
                     $first = false;
                     $special = urlencode(html_entity_decode($args['bmlt_custom_query']));
-                    $ret .= 'custom_query='.$special.'';
+                    $url .= 'custom_query='.$special.'';
                 }
+                $ret .= '"url":"'.$url.'",';
                 $color = "#294372";
                 if (isset($args['bmlt_color'])) {
                     $color = $args['bmlt_color'];
                 }
+                $ret .= '"color":"'.$color.'",';
                 $textColor = "white";
                 if (isset($args['bmlt_textColor'])) {
                     $textColor = $args['bmlt_textColor'];
                 }
-                $ret .= "', color: '$color', textColor: '$textColor'}),";
-
-                $ret .= 'args.eventRender = function(eventObj,el) {';
-                $ret .= "if (eventObj.hasOwnProperty('description')) {";
-                
-                $ret .= 'tippy(el[0], {content: eventObj.description, theme : WPFC.tippy_theme,
-					placement : WPFC.tippy_placement, allowHTML: true} );';
-                $ret .= "}"; // close if
-                $ret .= "  };"; // close event render function
             }
-            $ret .= '});</script>';
-            echo $ret;
+            $ret .= '"textColor":"'.$textColor.'"';
+            $ret .= "}}";
+            wp_add_inline_script('bmlt2calendar', $ret, 'before');
         }
     }
 }
