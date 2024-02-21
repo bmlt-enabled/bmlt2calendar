@@ -1,6 +1,9 @@
 <?php
+if (!defined('ABSPATH')) {
+    exit; // Exit if accessed directly
+}
 // phpcs:disable PSR1.Classes.ClassDeclaration.MissingNamespace
-class IcsLines
+class BMLT2CalendarIcsLines
 // phpcs:enable PSR1.Classes.ClassDeclaration.MissingNamespace
 {
     private $lines = array();
@@ -17,7 +20,7 @@ class IcsLines
         $value = str_replace(',', '\,', $value);
         $this->lines[] = $name.':'.$value;
     }
-    public function addLines(IcsLines $other)
+    public function addLines(Bmlt2CalendarIcsLines $other)
     {
         array_push($this->lines, ...$other->lines);
     }

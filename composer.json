@@ -8,6 +8,8 @@
         "name": "otrok7"
       }
     ],
+    "archive": { "exclude": [ "!vendor/*", ".*", "!.gitignore", "composer/", "*.yml" ] },
+
     "require": {
         "ramsey/uuid": "^4.7"
     },
