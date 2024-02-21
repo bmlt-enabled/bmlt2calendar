@@ -9,7 +9,7 @@ help:  ## Print the help documentation
 .PHONY: build
 build:  composer ## Build
 	git archive --format=zip --output=${ZIP_FILENAME} $(COMMIT)
-	zip -r ${ZIP_FILENAME} vendor/
+	zip -d ${ZIP_FILENAME} ".github/workflows/*" ".github/workflows/" ".github/" ".vscode/" ".gitignore" "composer.*" ".github/" ".phpcs.xml"
 	mkdir ${BUILD_DIR} && mv ${ZIP_FILENAME} ${BUILD_DIR}/
 
 clean:  ## clean
