@@ -8,7 +8,7 @@ help:  ## Print the help documentation
 
 .PHONY: build
 build:  composer ## Build
-	git archive --format=zip --output=${ZIP_FILENAME} $(COMMIT) "*.php" "*.js" "Readme.txt"
+	git archive --format=zip --output=${ZIP_FILENAME} "*.php" "*.js" "Readme.txt"
 	mkdir ${BUILD_DIR} && mv ${ZIP_FILENAME} ${BUILD_DIR}/
 
 clean:  ## clean
