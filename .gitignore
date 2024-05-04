@@ -1,4 +1,12 @@
-/.DS_Store
-/.vscode
-/composer.lock
-/vendor
+.project
+.settings/*
+.vscode/*
+.DS_Store
+.idea
+vendor/
+logs/
+build/
+*.zip
+.phpdoc/
+docs/
+composer.lock
