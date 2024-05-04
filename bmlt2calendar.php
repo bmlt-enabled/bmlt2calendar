@@ -6,6 +6,7 @@ Description: Convert data from a BMLT Meeting database to a calendar format
 Author: otrok7, bmlt-enabled
 Author URI: https://bmlt.app
 Version: 1.0.0
+
 License:           GPL v2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 */
@@ -169,7 +170,7 @@ if (!class_exists("BMLT2calendar")) {
             $this->endCalendar($cal);
 
             $this->sendHeaders();
-            echo $cal->toString();
+            echo esc_html($cal->toString());
         }
         private function formatLocation($meeting)
         {
@@ -279,7 +280,7 @@ if (!class_exists("BMLT2calendar")) {
             if ($meeting['venue_type'] === '2' && !empty($this->options['virtual_meeting_details_href'])) {
                 $path = $this->options['virtual_meeting_details_href'];
             }
-            return $this->getServerRequestScheme().'://'.$_SERVER['HTTP_HOST'].$path."?meeting-id=".$meeting['id_bigint'];
+            return esc_url_raw($this->getServerRequestScheme().'://'.sanitize_text_field($_SERVER['HTTP_HOST']).$path."?meeting-id=".$meeting['id_bigint']);
         }
         private function createEventFromMeeting($meeting, DateTime $timePeriodStart, DateTime $timePeriodEnd, $expand)
         {
