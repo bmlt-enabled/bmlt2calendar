@@ -36,3 +36,5 @@ Start and end dates can also be provided to the ICS feed.  In this case, however
 
 
 == Changelog ==
+= 1.0.0 =
+* Initial wordpress release.
